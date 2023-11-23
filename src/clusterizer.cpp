@@ -13,8 +13,17 @@
 namespace meshopt
 {
 
-// This must be <= 255 since index 0xff is used internally to indice a vertex that doesn't belong to a meshlet
+#define MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD 0
+#define MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT 1
+
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+const size_t kMeshletMaxVertices = 256;
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+const size_t kMeshletMaxVertices = 256;
+#else
+// This must be <= 255 since index 0xff is used internally to index a vertex that doesn't belong to a meshlet
 const size_t kMeshletMaxVertices = 255;
+#endif
 
 // A reasonable limit is around 2*max_vertices or less
 const size_t kMeshletMaxTriangles = 512;
@@ -230,22 +239,61 @@ static void finishMeshlet(meshopt_Meshlet& meshlet, unsigned char* meshlet_trian
 		meshlet_triangles[offset++] = 0;
 }
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+static bool appendMeshlet(meshopt_Meshlet& meshlet, unsigned int a, unsigned int b, unsigned int c, unsigned char* used, unsigned int* used_mask, meshopt_Meshlet* meshlets, unsigned int* meshlet_vertices, unsigned char* meshlet_triangles, size_t meshlet_offset, size_t max_vertices, size_t max_triangles)
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+static bool appendMeshlet(meshopt_Meshlet& meshlet, unsigned int a, unsigned int b, unsigned int c, unsigned short* used, meshopt_Meshlet* meshlets, unsigned int* meshlet_vertices, unsigned char* meshlet_triangles, size_t meshlet_offset, size_t max_vertices, size_t max_triangles)
+#else
 static bool appendMeshlet(meshopt_Meshlet& meshlet, unsigned int a, unsigned int b, unsigned int c, unsigned char* used, meshopt_Meshlet* meshlets, unsigned int* meshlet_vertices, unsigned char* meshlet_triangles, size_t meshlet_offset, size_t max_vertices, size_t max_triangles)
+#endif
 {
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	unsigned int abit = 1 << (a & 0x1f);
+	unsigned int bbit = 1 << (b & 0x1f);
+	unsigned int cbit = 1 << (c & 0x1f);
+
+	unsigned int& au = used_mask[a >> 5];
+	unsigned int& bu = used_mask[b >> 5];
+	unsigned int& cu = used_mask[c >> 5];
+#endif
+
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	unsigned short& av = used[a];
+	unsigned short& bv = used[b];
+	unsigned short& cv = used[c];
+#else
 	unsigned char& av = used[a];
 	unsigned char& bv = used[b];
 	unsigned char& cv = used[c];
+#endif
 
 	bool result = false;
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	unsigned int used_extra = ((au & abit) != 0) + ((bu & bbit) != 0) + ((cu & cbit) != 0);
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	unsigned int used_extra = (av == 0xffff) + (bv == 0xffff) + (cv == 0xffff);
+#else
 	unsigned int used_extra = (av == 0xff) + (bv == 0xff) + (cv == 0xff);
+#endif
 
 	if (meshlet.vertex_count + used_extra > max_vertices || meshlet.triangle_count >= max_triangles)
 	{
 		meshlets[meshlet_offset] = meshlet;
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		for (size_t j = 0; j < meshlet.vertex_count; ++j)
+		{
+			unsigned int i = meshlet_vertices[meshlet.vertex_offset + j];
+			used_mask[i >> 5] |= 1 << (i & 0x1f);
+		}
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+		for (size_t j = 0; j < meshlet.vertex_count; ++j)
+			used[meshlet_vertices[meshlet.vertex_offset + j]] = 0xffff;
+#else
 		for (size_t j = 0; j < meshlet.vertex_count; ++j)
 			used[meshlet_vertices[meshlet.vertex_offset + j]] = 0xff;
+#endif
 
 		finishMeshlet(meshlet, meshlet_triangles);
 
@@ -257,33 +305,87 @@ static bool appendMeshlet(meshopt_Meshlet& meshlet, unsigned int a, unsigned int
 		result = true;
 	}
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	if ((au & abit) != 0)
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	if (av == 0xffff)
+#else
 	if (av == 0xff)
+#endif
 	{
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+		av = (unsigned short)meshlet.vertex_count;
+#else
 		av = (unsigned char)meshlet.vertex_count;
+#endif
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		au &= ~abit;
+#endif
 		meshlet_vertices[meshlet.vertex_offset + meshlet.vertex_count++] = a;
 	}
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	if ((bu & bbit) != 0)
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	if (bv == 0xffff)
+#else
 	if (bv == 0xff)
+#endif
 	{
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+		bv = (unsigned short)meshlet.vertex_count;
+#else
 		bv = (unsigned char)meshlet.vertex_count;
+#endif
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		bu &= ~bbit;
+#endif
 		meshlet_vertices[meshlet.vertex_offset + meshlet.vertex_count++] = b;
 	}
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	if ((cu & cbit) != 0)
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	if (cv == 0xffff)
+#else
 	if (cv == 0xff)
+#endif
 	{
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+		cv = (unsigned short)meshlet.vertex_count;
+#else
 		cv = (unsigned char)meshlet.vertex_count;
+#endif
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		cu &= ~cbit;
+#endif
 		meshlet_vertices[meshlet.vertex_offset + meshlet.vertex_count++] = c;
 	}
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	assert(av <= 0xff);
+	assert(bv <= 0xff);
+	assert(cv <= 0xff);
+	meshlet_triangles[meshlet.triangle_offset + meshlet.triangle_count * 3 + 0] = (unsigned char)av;
+	meshlet_triangles[meshlet.triangle_offset + meshlet.triangle_count * 3 + 1] = (unsigned char)bv;
+	meshlet_triangles[meshlet.triangle_offset + meshlet.triangle_count * 3 + 2] = (unsigned char)cv;
+#else
 	meshlet_triangles[meshlet.triangle_offset + meshlet.triangle_count * 3 + 0] = av;
 	meshlet_triangles[meshlet.triangle_offset + meshlet.triangle_count * 3 + 1] = bv;
 	meshlet_triangles[meshlet.triangle_offset + meshlet.triangle_count * 3 + 2] = cv;
+#endif
 	meshlet.triangle_count++;
 
 	return result;
 }
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+static unsigned int getNeighborTriangle(const meshopt_Meshlet& meshlet, const Cone* meshlet_cone, unsigned int* meshlet_vertices, const unsigned int* indices, const TriangleAdjacency2& adjacency, const Cone* triangles, const unsigned int* live_triangles, const unsigned int* used_mask, float meshlet_expected_radius, float cone_weight, unsigned int* out_extra)
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+static unsigned int getNeighborTriangle(const meshopt_Meshlet& meshlet, const Cone* meshlet_cone, unsigned int* meshlet_vertices, const unsigned int* indices, const TriangleAdjacency2& adjacency, const Cone* triangles, const unsigned int* live_triangles, const unsigned short* used, float meshlet_expected_radius, float cone_weight, unsigned int* out_extra)
+#else
 static unsigned int getNeighborTriangle(const meshopt_Meshlet& meshlet, const Cone* meshlet_cone, unsigned int* meshlet_vertices, const unsigned int* indices, const TriangleAdjacency2& adjacency, const Cone* triangles, const unsigned int* live_triangles, const unsigned char* used, float meshlet_expected_radius, float cone_weight, unsigned int* out_extra)
+#endif
 {
 	unsigned int best_triangle = ~0u;
 	unsigned int best_extra = 5;
@@ -301,7 +403,22 @@ static unsigned int getNeighborTriangle(const meshopt_Meshlet& meshlet, const Co
 			unsigned int triangle = neighbors[j];
 			unsigned int a = indices[triangle * 3 + 0], b = indices[triangle * 3 + 1], c = indices[triangle * 3 + 2];
 
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+			unsigned int a_bit = 1 << (a & 0x1f);
+			unsigned int b_bit = 1 << (b & 0x1f);
+			unsigned int c_bit = 1 << (c & 0x1f);
+
+			unsigned int au = used_mask[a >> 5] & a_bit;
+			unsigned int bu = used_mask[b >> 5] & b_bit;
+			unsigned int cu = used_mask[c >> 5] & c_bit;
+
+			unsigned int extra = (au != 0) + (bu != 0) + (cu != 0);
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+			unsigned int extra = (used[a] == 0xffff) + (used[b] == 0xffff) + (used[c] == 0xffff);
+
+#else
 			unsigned int extra = (used[a] == 0xff) + (used[b] == 0xff) + (used[c] == 0xff);
+#endif
 
 			// triangles that don't add new vertices to meshlets are max. priority
 			if (extra != 0)
@@ -576,8 +693,20 @@ size_t meshopt_buildMeshlets(meshopt_Meshlet* meshlets, unsigned int* meshlet_ve
 	kdtreeBuild(0, nodes, face_count * 2, &triangles[0].px, sizeof(Cone) / sizeof(float), kdindices, face_count, /* leaf_size= */ 8);
 
 	// index of the vertex in the meshlet, 0xff if the vertex isn't used
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	unsigned short* used = allocator.allocate<unsigned short>(vertex_count);
+#else
 	unsigned char* used = allocator.allocate<unsigned char>(vertex_count);
+#endif
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	size_t used_mask_count = (vertex_count + 31) / 32;
+	unsigned int* used_mask = allocator.allocate<unsigned int>(used_mask_count);
+	memset(used_mask, -1, sizeof(unsigned int) * used_mask_count);
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	memset(used, -1, vertex_count * sizeof(unsigned short));
+#else
 	memset(used, -1, vertex_count);
+#endif
 
 	meshopt_Meshlet meshlet = {};
 	size_t meshlet_offset = 0;
@@ -589,12 +718,20 @@ size_t meshopt_buildMeshlets(meshopt_Meshlet* meshlets, unsigned int* meshlet_ve
 		Cone meshlet_cone = getMeshletCone(meshlet_cone_acc, meshlet.triangle_count);
 
 		unsigned int best_extra = 0;
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		unsigned int best_triangle = getNeighborTriangle(meshlet, &meshlet_cone, meshlet_vertices, indices, adjacency, triangles, live_triangles, used_mask, meshlet_expected_radius, cone_weight, &best_extra);
+#else
 		unsigned int best_triangle = getNeighborTriangle(meshlet, &meshlet_cone, meshlet_vertices, indices, adjacency, triangles, live_triangles, used, meshlet_expected_radius, cone_weight, &best_extra);
+#endif
 
 		// if the best triangle doesn't fit into current meshlet, the spatial scoring we've used is not very meaningful, so we re-select using topological scoring
 		if (best_triangle != ~0u && (meshlet.vertex_count + best_extra > max_vertices || meshlet.triangle_count >= max_triangles))
 		{
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+			best_triangle = getNeighborTriangle(meshlet, NULL, meshlet_vertices, indices, adjacency, triangles, live_triangles, used_mask, meshlet_expected_radius, 0.f, NULL);
+#else
 			best_triangle = getNeighborTriangle(meshlet, NULL, meshlet_vertices, indices, adjacency, triangles, live_triangles, used, meshlet_expected_radius, 0.f, NULL);
+#endif
 		}
 
 		// when we run out of neighboring triangles we need to switch to spatial search; we currently just pick the closest triangle irrespective of connectivity
@@ -616,7 +753,11 @@ size_t meshopt_buildMeshlets(meshopt_Meshlet* meshlets, unsigned int* meshlet_ve
 		assert(a < vertex_count && b < vertex_count && c < vertex_count);
 
 		// add meshlet to the output; when the current meshlet is full we reset the accumulated bounds
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		if (appendMeshlet(meshlet, a, b, c, used, used_mask, meshlets, meshlet_vertices, meshlet_triangles, meshlet_offset, max_vertices, max_triangles))
+#else
 		if (appendMeshlet(meshlet, a, b, c, used, meshlets, meshlet_vertices, meshlet_triangles, meshlet_offset, max_vertices, max_triangles))
+#endif
 		{
 			meshlet_offset++;
 			memset(&meshlet_cone_acc, 0, sizeof(meshlet_cone_acc));
@@ -683,8 +824,20 @@ size_t meshopt_buildMeshletsScan(meshopt_Meshlet* meshlets, unsigned int* meshle
 	meshopt_Allocator allocator;
 
 	// index of the vertex in the meshlet, 0xff if the vertex isn't used
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	unsigned short* used = allocator.allocate<unsigned short>(vertex_count);
+#else
 	unsigned char* used = allocator.allocate<unsigned char>(vertex_count);
+#endif
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+	size_t used_mask_count = (vertex_count + 31) / 32;
+	unsigned int* used_mask = allocator.allocate<unsigned int>(used_mask_count);
+	memset(used_mask, -1, sizeof(unsigned int) * used_mask_count);
+#elif MESHOPTIMIZER_SUPPORTS_256_VERTICES_USHORT
+	memset(used, -1, vertex_count * sizeof(unsigned short));
+#else
 	memset(used, -1, vertex_count);
+#endif
 
 	meshopt_Meshlet meshlet = {};
 	size_t meshlet_offset = 0;
@@ -695,7 +848,11 @@ size_t meshopt_buildMeshletsScan(meshopt_Meshlet* meshlets, unsigned int* meshle
 		assert(a < vertex_count && b < vertex_count && c < vertex_count);
 
 		// appends triangle to the meshlet and writes previous meshlet to the output if full
+#if MESHOPTIMIZER_SUPPORTS_256_VERTICES_BITFIELD
+		meshlet_offset += appendMeshlet(meshlet, a, b, c, used, used_mask, meshlets, meshlet_vertices, meshlet_triangles, meshlet_offset, max_vertices, max_triangles);
+#else
 		meshlet_offset += appendMeshlet(meshlet, a, b, c, used, meshlets, meshlet_vertices, meshlet_triangles, meshlet_offset, max_vertices, max_triangles);
+#endif
 	}
 
 	if (meshlet.triangle_count)
